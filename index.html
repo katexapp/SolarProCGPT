@@ -1,0 +1,126 @@
+// === IMPROVED SOLAR ENGINE (HOURLY SIMULATION VERSION) ===
+
+// Key upgrade: replace average model with hourly simulation
+
+function simulateSolarSystem({ appliances, solarKw, batteryKwh, rate }) {
+
+  const HOURS = 24;
+  const DAYS = 30;
+
+  // Solar production curve (normalized bell curve)
+  const solarProfile = [
+    0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1.0,1.0,
+    0.95,0.85,0.7,0.5,0.3,0.15,0.05,0,0,0,0,0
+  ];
+
+  const solarPeak = solarKw * 0.9;
+
+  let totalSolarUsed = 0;
+  let totalGridImport = 0;
+  let battery = 0;
+
+  for (let d = 0; d < DAYS; d++) {
+    for (let h = 0; h < HOURS; h++) {
+
+      // 1. Solar generation this hour
+      const solarGen = solarProfile[h] * solarPeak;
+
+      // 2. Load this hour
+      let load = 0;
+
+      appliances.forEach(a => {
+        const kw = a.type.includes('ac')
+          ? a.power / 15 / 1000
+          : a.power / 1000;
+
+        const loadFactor = a.type === 'ac_inverter' ? 0.6
+          : a.type === 'fridge' ? 0.4
+          : a.type === 'computer' ? 0.5
+          : 1.0;
+
+        // Time matching
+        const isActive = (
+          (a.time === 'day' && h >= 8 && h <= 17) ||
+          (a.time === 'night' && (h <= 6 || h >= 19)) ||
+          (a.time === 'all')
+        );
+
+        if (isActive) {
+          load += kw * loadFactor * (a.hours / HOURS);
+        }
+      });
+
+      // 3. Match solar with load
+      let solarUsed = Math.min(load, solarGen);
+      let excessSolar = solarGen - solarUsed;
+      let remainingLoad = load - solarUsed;
+
+      // 4. Battery logic
+      if (batteryKwh > 0) {
+        // charge
+        const charge = Math.min(excessSolar, batteryKwh - battery);
+        battery += charge * 0.95;
+        excessSolar -= charge;
+
+        // discharge
+        const discharge = Math.min(battery, remainingLoad);
+        battery -= discharge;
+        solarUsed += discharge;
+        remainingLoad -= discharge;
+      }
+
+      // 5. Grid import
+      totalGridImport += remainingLoad;
+      totalSolarUsed += solarUsed;
+    }
+  }
+
+  const savings = totalSolarUsed * rate;
+
+  return {
+    solarUsedKwh: totalSolarUsed,
+    gridImportKwh: totalGridImport,
+    savings,
+  };
+}
+
+// === EV SMART SCHEDULER ===
+
+function optimizeEVCharging({ baseLoadProfile, solarProfile, chargerKw = 6.7 }) {
+
+  // Find best 3-hour window
+  let bestStart = 0;
+  let bestScore = -Infinity;
+
+  for (let h = 0; h < 24 - 3; h++) {
+    let score = 0;
+
+    for (let i = 0; i < 3; i++) {
+      const solar = solarProfile[h + i];
+      const load = baseLoadProfile[h + i];
+      score += solar - load;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = h;
+    }
+  }
+
+  return {
+    recommendedStartHour: bestStart,
+    expectedSolarCoverage: bestScore
+  };
+}
+
+// === MONTHLY SIMULATION ===
+
+function simulateMonthlyBill(input) {
+  const result = simulateSolarSystem(input);
+
+  return {
+    savings: result.savings,
+    newBill: (input.totalGrossKwh * input.rate) - result.savings,
+    solarReliance: (result.solarUsedKwh / input.totalGrossKwh) * 100
+  };
+}
