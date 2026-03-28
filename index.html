@@ -2,11 +2,12 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
-<title>Solar Simulation PRO</title>
+<title>Solar Pro Enhanced</title>
 <script src="https://unpkg.com/vue@3"></script>
 <style>
-body { font-family: Arial; padding: 20px; background:#f5f5f5; }
+body { font-family: Arial; background:#f5f5f5; padding:20px; }
 .card { background:white; padding:20px; border-radius:12px; margin-bottom:20px; }
+input, select { margin:5px; }
 </style>
 </head>
 <body>
@@ -14,31 +15,43 @@ body { font-family: Arial; padding: 20px; background:#f5f5f5; }
 <div id="app">
 
 <div class="card">
-<h2>⚙️ System Config</h2>
-Solar (kW): <input v-model.number="solarKw"><br><br>
-Battery (kWh): <input v-model.number="batteryKwh"><br><br>
-Rate (฿): <input v-model.number="rate">
+<h2>⚙️ System</h2>
+Solar kW: <input v-model.number="solarKw">
+Battery kWh: <input v-model.number="batteryKwh">
+Rate: <input v-model.number="rate">
 </div>
 
 <div class="card">
 <h2>🔌 Appliances</h2>
-<div v-for="a in appliances">
-{{a.name}} | {{a.power}}W | {{a.hours}}h | {{a.time}}
+<div v-for="(a,i) in appliances" :key="i">
+<input v-model="a.name">
+<input v-model.number="a.power"> W
+<input v-model.number="a.hours"> h
+<select v-model="a.time">
+<option value="day">Day</option>
+<option value="night">Night</option>
+<option value="all">All</option>
+</select>
+<select v-model="a.type">
+<option value="ac_inverter">AC</option>
+<option value="ev">EV</option>
+<option value="general">General</option>
+</select>
 </div>
+<button @click="addAppliance">+ Add</button>
 </div>
 
 <div class="card">
-<h2>📊 Result</h2>
-Solar Used: {{result.solarUsed.toFixed(1)}} kWh<br>
-Grid Import: {{result.grid.toFixed(1)}} kWh<br>
-Savings: ฿{{result.savings.toFixed(0)}}<br>
-Solar Reliance: {{result.reliance.toFixed(1)}} %
+<h2>📊 Results</h2>
+Solar Used: {{res.solarUsed.toFixed(1)}} kWh<br>
+Grid Import: {{res.grid.toFixed(1)}} kWh<br>
+Savings: {{res.savings.toFixed(0)}} ฿<br>
+Reliance: {{res.reliance.toFixed(1)}} %
 </div>
 
 <div class="card">
-<h2>⚡ EV Optimal Charging</h2>
-Best Start Hour: {{ev.start}}:00<br>
-Score: {{ev.score.toFixed(2)}}
+<h2>⚡ EV Optimization</h2>
+Best Start: {{ev.start}}:00
 </div>
 
 </div>
@@ -52,43 +65,29 @@ return{
 solarKw:5,
 batteryKwh:0,
 rate:4.65,
-
 appliances:[
-{ name:"แอร์", power:15000, hours:10, time:"night", type:"ac_inverter"},
+{ name:"AC", power:15000, hours:10, time:"night", type:"ac_inverter"},
 { name:"EV", power:6700, hours:3, time:"day", type:"ev"},
-{ name:"Base Load", power:800, hours:12, time:"all", type:"general"}
+{ name:"Other", power:800, hours:12, time:"all", type:"general"}
 ]
 }
 },
-
 computed:{
-
-result(){
-return this.simulate();
+res(){ return this.simulate(); },
+ev(){ return this.optimizeEV(); }
 },
-
-ev(){
-return this.optimizeEV();
-}
-
-},
-
 methods:{
 
-getKW(a){
-return a.type.includes('ac') ? a.power/15/1000 : a.power/1000;
-},
+getKW(a){ return a.type.includes('ac') ? a.power/15/1000 : a.power/1000; },
 
 loadFactor(a){
-if(a.type==="ac_inverter") return 0.6;
-if(a.type==="fridge") return 0.4;
-if(a.type==="computer") return 0.5;
+if(a.type==='ac_inverter') return 0.6;
 return 1;
 },
 
 isActive(a,h){
-if(a.time==="day") return h>=8 && h<=17;
-if(a.time==="night") return h<=6 || h>=19;
+if(a.time==='day') return h>=8 && h<=17;
+if(a.time==='night') return h<=6 || h>=19;
 return true;
 },
 
@@ -99,44 +98,39 @@ const solarProfile=[0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1,1,0.95,0.85,0.7,0.5,0.
 let solarPeak=this.solarKw*0.9;
 let battery=0;
 
-let solarUsed=0;
-let grid=0;
-let totalLoad=0;
+let solarUsed=0, grid=0, totalLoad=0;
 
-for(let d=0;d<30;d++){
-for(let h=0;h<24;h++){
+for(let d=0; d<30; d++){
+for(let h=0; h<24; h++){
 
 let solarGen=solarProfile[h]*solarPeak;
 
 let load=0;
-
 this.appliances.forEach(a=>{
 if(this.isActive(a,h)){
-load += this.getKW(a)*this.loadFactor(a)*(a.hours/24);
+load+=this.getKW(a)*this.loadFactor(a)*(a.hours/24);
 }
 });
 
 totalLoad+=load;
 
 let use=Math.min(load,solarGen);
-let remainLoad=load-use;
+let remain=load-use;
 let excess=solarGen-use;
 
 if(this.batteryKwh>0){
-
 let charge=Math.min(excess,this.batteryKwh-battery);
 battery+=charge*0.95;
 excess-=charge;
 
-let discharge=Math.min(battery,remainLoad);
+let discharge=Math.min(battery,remain);
 battery-=discharge;
 use+=discharge;
-remainLoad-=discharge;
-
+remain-=discharge;
 }
 
 solarUsed+=use;
-grid+=remainLoad;
+grid+=remain;
 
 }
 }
@@ -147,33 +141,26 @@ grid,
 savings:solarUsed*this.rate,
 reliance:(solarUsed/totalLoad)*100
 };
-
 },
 
 optimizeEV(){
-
 const solarProfile=[0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1,1,0.95,0.85,0.7,0.5,0.3,0.15,0.05,0,0,0,0,0];
 
-let best=0;
-let bestScore=-999;
+let best=0, bestScore=-999;
 
 for(let h=0;h<21;h++){
-
 let score=0;
-
 for(let i=0;i<3;i++){
 score+=solarProfile[h+i];
 }
-
-if(score>bestScore){
-bestScore=score;
-best=h;
+if(score>bestScore){ bestScore=score; best=h; }
 }
 
-}
+return {start:best};
+},
 
-return { start:best, score:bestScore };
-
+addAppliance(){
+this.appliances.push({name:'New',power:1000,hours:1,time:'all',type:'general'});
 }
 
 }
