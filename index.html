@@ -1,126 +1,185 @@
-// === IMPROVED SOLAR ENGINE (HOURLY SIMULATION VERSION) ===
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Solar Simulation PRO</title>
+<script src="https://unpkg.com/vue@3"></script>
+<style>
+body { font-family: Arial; padding: 20px; background:#f5f5f5; }
+.card { background:white; padding:20px; border-radius:12px; margin-bottom:20px; }
+</style>
+</head>
+<body>
 
-// Key upgrade: replace average model with hourly simulation
+<div id="app">
 
-function simulateSolarSystem({ appliances, solarKw, batteryKwh, rate }) {
+<div class="card">
+<h2>⚙️ System Config</h2>
+Solar (kW): <input v-model.number="solarKw"><br><br>
+Battery (kWh): <input v-model.number="batteryKwh"><br><br>
+Rate (฿): <input v-model.number="rate">
+</div>
 
-  const HOURS = 24;
-  const DAYS = 30;
+<div class="card">
+<h2>🔌 Appliances</h2>
+<div v-for="a in appliances">
+{{a.name}} | {{a.power}}W | {{a.hours}}h | {{a.time}}
+</div>
+</div>
 
-  // Solar production curve (normalized bell curve)
-  const solarProfile = [
-    0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1.0,1.0,
-    0.95,0.85,0.7,0.5,0.3,0.15,0.05,0,0,0,0,0
-  ];
+<div class="card">
+<h2>📊 Result</h2>
+Solar Used: {{result.solarUsed.toFixed(1)}} kWh<br>
+Grid Import: {{result.grid.toFixed(1)}} kWh<br>
+Savings: ฿{{result.savings.toFixed(0)}}<br>
+Solar Reliance: {{result.reliance.toFixed(1)}} %
+</div>
 
-  const solarPeak = solarKw * 0.9;
+<div class="card">
+<h2>⚡ EV Optimal Charging</h2>
+Best Start Hour: {{ev.start}}:00<br>
+Score: {{ev.score.toFixed(2)}}
+</div>
 
-  let totalSolarUsed = 0;
-  let totalGridImport = 0;
-  let battery = 0;
+</div>
 
-  for (let d = 0; d < DAYS; d++) {
-    for (let h = 0; h < HOURS; h++) {
+<script>
+const { createApp } = Vue;
 
-      // 1. Solar generation this hour
-      const solarGen = solarProfile[h] * solarPeak;
+createApp({
+data(){
+return{
+solarKw:5,
+batteryKwh:0,
+rate:4.65,
 
-      // 2. Load this hour
-      let load = 0;
+appliances:[
+{ name:"แอร์", power:15000, hours:10, time:"night", type:"ac_inverter"},
+{ name:"EV", power:6700, hours:3, time:"day", type:"ev"},
+{ name:"Base Load", power:800, hours:12, time:"all", type:"general"}
+]
+}
+},
 
-      appliances.forEach(a => {
-        const kw = a.type.includes('ac')
-          ? a.power / 15 / 1000
-          : a.power / 1000;
+computed:{
 
-        const loadFactor = a.type === 'ac_inverter' ? 0.6
-          : a.type === 'fridge' ? 0.4
-          : a.type === 'computer' ? 0.5
-          : 1.0;
+result(){
+return this.simulate();
+},
 
-        // Time matching
-        const isActive = (
-          (a.time === 'day' && h >= 8 && h <= 17) ||
-          (a.time === 'night' && (h <= 6 || h >= 19)) ||
-          (a.time === 'all')
-        );
-
-        if (isActive) {
-          load += kw * loadFactor * (a.hours / HOURS);
-        }
-      });
-
-      // 3. Match solar with load
-      let solarUsed = Math.min(load, solarGen);
-      let excessSolar = solarGen - solarUsed;
-      let remainingLoad = load - solarUsed;
-
-      // 4. Battery logic
-      if (batteryKwh > 0) {
-        // charge
-        const charge = Math.min(excessSolar, batteryKwh - battery);
-        battery += charge * 0.95;
-        excessSolar -= charge;
-
-        // discharge
-        const discharge = Math.min(battery, remainingLoad);
-        battery -= discharge;
-        solarUsed += discharge;
-        remainingLoad -= discharge;
-      }
-
-      // 5. Grid import
-      totalGridImport += remainingLoad;
-      totalSolarUsed += solarUsed;
-    }
-  }
-
-  const savings = totalSolarUsed * rate;
-
-  return {
-    solarUsedKwh: totalSolarUsed,
-    gridImportKwh: totalGridImport,
-    savings,
-  };
+ev(){
+return this.optimizeEV();
 }
 
-// === EV SMART SCHEDULER ===
+},
 
-function optimizeEVCharging({ baseLoadProfile, solarProfile, chargerKw = 6.7 }) {
+methods:{
 
-  // Find best 3-hour window
-  let bestStart = 0;
-  let bestScore = -Infinity;
+getKW(a){
+return a.type.includes('ac') ? a.power/15/1000 : a.power/1000;
+},
 
-  for (let h = 0; h < 24 - 3; h++) {
-    let score = 0;
+loadFactor(a){
+if(a.type==="ac_inverter") return 0.6;
+if(a.type==="fridge") return 0.4;
+if(a.type==="computer") return 0.5;
+return 1;
+},
 
-    for (let i = 0; i < 3; i++) {
-      const solar = solarProfile[h + i];
-      const load = baseLoadProfile[h + i];
-      score += solar - load;
-    }
+isActive(a,h){
+if(a.time==="day") return h>=8 && h<=17;
+if(a.time==="night") return h<=6 || h>=19;
+return true;
+},
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestStart = h;
-    }
-  }
+simulate(){
 
-  return {
-    recommendedStartHour: bestStart,
-    expectedSolarCoverage: bestScore
-  };
+const solarProfile=[0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1,1,0.95,0.85,0.7,0.5,0.3,0.15,0.05,0,0,0,0,0];
+
+let solarPeak=this.solarKw*0.9;
+let battery=0;
+
+let solarUsed=0;
+let grid=0;
+let totalLoad=0;
+
+for(let d=0;d<30;d++){
+for(let h=0;h<24;h++){
+
+let solarGen=solarProfile[h]*solarPeak;
+
+let load=0;
+
+this.appliances.forEach(a=>{
+if(this.isActive(a,h)){
+load += this.getKW(a)*this.loadFactor(a)*(a.hours/24);
+}
+});
+
+totalLoad+=load;
+
+let use=Math.min(load,solarGen);
+let remainLoad=load-use;
+let excess=solarGen-use;
+
+if(this.batteryKwh>0){
+
+let charge=Math.min(excess,this.batteryKwh-battery);
+battery+=charge*0.95;
+excess-=charge;
+
+let discharge=Math.min(battery,remainLoad);
+battery-=discharge;
+use+=discharge;
+remainLoad-=discharge;
+
 }
 
-// === MONTHLY SIMULATION ===
+solarUsed+=use;
+grid+=remainLoad;
 
-function simulateMonthlyBill(input) {
-  const result = simulateSolarSystem(input);
-
-  return {
-    savings: result.savings,
-    newBill: (input.totalGrossKwh * input.rate) - result.savings,
-    solarReliance: (result.solarUsedKwh / input.totalGrossKwh) * 100
-  };
 }
+}
+
+return{
+solarUsed,
+grid,
+savings:solarUsed*this.rate,
+reliance:(solarUsed/totalLoad)*100
+};
+
+},
+
+optimizeEV(){
+
+const solarProfile=[0,0,0,0,0.05,0.15,0.35,0.6,0.8,0.95,1,1,0.95,0.85,0.7,0.5,0.3,0.15,0.05,0,0,0,0,0];
+
+let best=0;
+let bestScore=-999;
+
+for(let h=0;h<21;h++){
+
+let score=0;
+
+for(let i=0;i<3;i++){
+score+=solarProfile[h+i];
+}
+
+if(score>bestScore){
+bestScore=score;
+best=h;
+}
+
+}
+
+return { start:best, score:bestScore };
+
+}
+
+}
+
+}).mount('#app');
+</script>
+
+</body>
+</html>
